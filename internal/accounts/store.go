@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/bootdotdev/learn-web-security/internal/database/dbgen"
@@ -20,6 +21,8 @@ const defaultSessionTTL = 30 * 24 * time.Hour
 var ErrEmailExists = errors.New("an account already exists for that email")
 
 func NormalizeEmail(email string) string {
+	email = strings.TrimSpace(email)
+	email = strings.ToLower(email)
 	return email
 }
 
@@ -187,6 +190,9 @@ func (store *Store) CurrentSession(ctx context.Context, token string) (CurrentSe
 			return CurrentSession{}, false, nil
 		}
 		return CurrentSession{}, false, fmt.Errorf("find session: %w", err)
+	}
+	if row.RevokedAt != nil {
+		return CurrentSession{}, false, nil
 	}
 	expiresAt, err := time.Parse(time.RFC3339, row.ExpiresAt)
 	if err != nil || !store.now().Before(expiresAt) {

@@ -10,6 +10,7 @@ import (
 
 	"github.com/bootdotdev/learn-web-security/internal/accounts"
 	"github.com/bootdotdev/learn-web-security/internal/auth/mfa"
+	"github.com/bootdotdev/learn-web-security/internal/auth/passwords"
 	"github.com/bootdotdev/learn-web-security/internal/auth/sessions"
 	"github.com/bootdotdev/learn-web-security/internal/httpx"
 	"github.com/bootdotdev/learn-web-security/internal/logging"
@@ -61,6 +62,7 @@ func (handler *Handler) Page(responseWriter http.ResponseWriter, request *http.R
 	if !ok {
 		return
 	}
+	handler.logger.Event("account_accessed", map[string]any{"userId": current.User.ID, "email": current.User.Email, "expiresAt": current.Session.ExpiresAt})
 	if err := handler.renderPage(responseWriter, http.StatusOK, current, ""); err != nil {
 		handler.internalError(responseWriter, request, err)
 	}
@@ -71,6 +73,18 @@ func (handler *Handler) UpdateEmail(responseWriter http.ResponseWriter, request 
 	if !ok || !handler.verifyCSRF(responseWriter, request, current.Session.CSRFToken) {
 		return
 	}
+
+	password, err := httpx.FormValue(request, "currentPassword")
+	if err != nil {
+		handler.errorPage(responseWriter, http.StatusBadRequest, "Invalid Request", "The submitted form is invalid.")
+	}
+
+	passwordValid := passwords.Verify(password, current.User.PasswordHash)
+	if !passwordValid {
+		handler.errorPage(responseWriter, http.StatusForbidden, "Invalid Request", "Please re-enter your current password")
+		return
+	}
+
 	email, emailErr := httpx.FormValue(request, "email")
 	if emailErr != nil {
 		handler.errorPage(responseWriter, http.StatusBadRequest, "Invalid Request", "The submitted form is invalid.")
@@ -94,6 +108,7 @@ func (handler *Handler) UpdateEmail(responseWriter http.ResponseWriter, request 
 		}
 		return
 	}
+
 	if err := handler.accountStore.UpdateEmail(request.Context(), current.User.ID, email); errors.Is(err, accounts.ErrEmailExists) {
 		if renderErr := handler.renderPage(responseWriter, http.StatusConflict, current, "Email is already in use."); renderErr != nil {
 			handler.internalError(responseWriter, request, renderErr)

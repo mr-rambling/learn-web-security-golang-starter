@@ -129,7 +129,24 @@ func verifyAt(code, secret string, timestamp time.Time) bool {
 }
 
 func (store *Store) VerifyAndConsume(ctx context.Context, userID int64, code, secret string) (bool, error) {
-	return verifyAt(code, secret, store.now()), nil
+	time := store.now()
+	timestep := int64(float64(time.Unix()) / float64(totpPeriodSeconds))
+	res, err := store.queries.ConsumeTOTPStep(ctx, dbgen.ConsumeTOTPStepParams{
+		TimeStep: &timestep,
+		UserID:   userID,
+	})
+	if err != nil {
+		return false, fmt.Errorf("Error with authentication code: %x", err)
+	}
+	rows, err := res.RowsAffected()
+	if rows != 1 || err != nil {
+		return false, err
+	}
+
+	if verifyAt(code, secret, time) {
+		return true, nil
+	}
+	return false, nil
 }
 
 func (store *Store) ConfirmEnrollment(ctx context.Context, userID int64) ([]string, error) {
@@ -282,7 +299,18 @@ func (store *Store) ConsumeBackupCode(ctx context.Context, userID int64, code st
 	if err := store.database.QueryRowContext(ctx, "SELECT COUNT(*) FROM totp_backup_codes WHERE user_id = ? AND code_hash = ?", userID, hashToken(code)).Scan(&count); err != nil {
 		return false, fmt.Errorf("find TOTP backup code: %w", err)
 	}
-	return count == 1, nil
+	res, err := store.queries.ConsumeTOTPBackupCode(ctx, dbgen.ConsumeTOTPBackupCodeParams{
+		UserID:   userID,
+		CodeHash: hashToken(code),
+	})
+	if err != nil {
+		return false, fmt.Errorf("Error consuming code: %v", err)
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("Error checking code consumption: %v", err)
+	}
+	return rows == 1, nil
 }
 
 func (store *Store) CountRecentRecoveryFailures(ctx context.Context, email string) (int64, error) {
